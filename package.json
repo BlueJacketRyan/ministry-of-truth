@@ -1,0 +1,10 @@
+{
+  "name": "ministry-of-truth",
+  "version": "1.0.0",
+  "description": "A dystopian document-redaction game.",
+  "private": true,
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js"
+  }
+}
