@@ -234,6 +234,48 @@ const LETTERS: Letter[] = [
     parts: ["The anthem will be performed forty times on Founding Day. Attendance will be measured in decibels."] },
 ];
 
+/* ---------- THE CLERK'S INNER VOICE ----------
+   A line of the player-character's own thought sits above each letter, giving
+   the censor a personality: a reluctant double-agent. When a conscience letter
+   is actually forbidden today (a real dilemma), the line nudges — indirectly,
+   never naming the mechanic — toward letting the truth reach the resistance. */
+const THOUGHTS_CONSCIENCE: string[] = [
+  "Strange, how my hand slows on the ones that matter.",
+  "Someone below would give a week's bread to read this.",
+  "If this slipped the desk, it wouldn't stay quiet for long.",
+  "The tunnels are patient. They still notice what I let through.",
+  "Bury it and something underground goes dark. Free it and something stirs.",
+  "This isn't paper. It's a door — and I am the one holding the key.",
+  "They trust the clerk to be a coward. They don't know my other name.",
+  "My other name would never forgive me for this one.",
+];
+const THOUGHTS_ROUTINE: string[] = [
+  "Another word the State would rather forget. Easy enough.",
+  "Just a rule. Just ink. I stopped flinching at these long ago.",
+  "Nothing here worth my neck. Black it and breathe.",
+  "The Ministry's little erasures. This one costs me nothing.",
+  "Redact, file, forget. The rhythm of a loyal man.",
+];
+const THOUGHTS_CLEAN: string[] = [
+  "Paper. Only paper. Nothing to hide today.",
+  "Harmless enough to sign without a second thought.",
+  "Nothing the State fears in this one. A small mercy.",
+  "Clean. I almost miss the ones that make me choose.",
+  "No teeth in this letter. My hands are still, for once.",
+];
+
+function pick(list: string[]): string {
+  return list[Math.floor(Math.random() * list.length)];
+}
+
+/** Choose the clerk's line for a letter, based on whether it poses a real
+ *  dilemma today (forbidden content) and whether it is a conscience letter. */
+function chooseThought(letter: Letter, hasForbidden: boolean): string {
+  if (hasForbidden && letter.conscience) return pick(THOUGHTS_CONSCIENCE);
+  if (hasForbidden) return pick(THOUGHTS_ROUTINE);
+  return pick(THOUGHTS_CLEAN);
+}
+
 /* ---------- TUNING ---------- */
 const SESSIONS_PER_DAY = 3;
 const LETTERS_PER_SESSION = 6;
@@ -264,6 +306,8 @@ let paintState = false;
 let locked = false;
 let clockInterval: number | null = null;
 let timeLeft = 0;
+let soldOut = false;              // did this filing bury (sell out) a conscience letter?
+let pendingForcedEnding = false;  // set when the "forced forever" betrayal ending should fire
 
 /* ---------- DOM HELPERS ----------
    byId asserts the element exists (used for elements we know are on the page);
@@ -419,8 +463,14 @@ function renderLetter(): void {
     return lead + '<span class="tok" data-i="' + i + '">' + escapeHtml(t.word) + "</span>";
   }).join("");
 
+  // The clerk's inner voice for this letter — nudges toward the resistance
+  // when there is a real truth to bury today.
+  const hasForbidden = currentTokens.some((t) => t.topic !== null && forbidden.includes(t.topic));
+  const thought = chooseThought(currentLetter, hasForbidden);
+
   const docBlock =
     "<div>" +
+      '<div id="thought">' + escapeHtml(thought) + "</div>" +
       '<div id="doc-wrap">' +
         '<div id="doc" class="' + (markerActive ? "marking" : "") + '">' +
           '<div class="doc-meta">From: ' + escapeHtml(currentLetter.from) +
@@ -476,6 +526,7 @@ function handleTimeout(): void {
   if (locked) return;
   locked = true;
   stopClock();
+  pendingForcedEnding = false;
   sessionMistakes++;
   rations = Math.max(0, rations - 1);
   showStamp("SEIZED", "var(--stamp)");
@@ -549,6 +600,9 @@ function fileDocument(): void {
   locked = true;
   stopClock();
 
+  const rationsAtStart = rations;
+  soldOut = false;
+
   // Which words SHOULD be redacted today, and which the player actually blacked.
   const required = new Set<number>();
   const blacked = new Set<number>();
@@ -594,6 +648,7 @@ function fileDocument(): void {
       stampText = "FILED"; stampColor = "#3f5a33"; fbClass = "guilt";
       fbText = "You blacked it out. A true thing stops here — the regime stamps your ration book, and the tunnels grow one voice quieter.";
       rationDelta = 1; resistDelta = -1; buried++;
+      soldOut = true;  // a rebellion letter, sold out to the regime
     } else {
       stampText = "FILED"; stampColor = "#3f5a33"; fbClass = "good";
       fbText = "Filed without comment. The words are gone; so is whatever they meant.";
@@ -614,6 +669,10 @@ function fileDocument(): void {
   resistance = Math.max(0, resistance + resistDelta);
   rations = Math.max(0, Math.min(RATIONS_MAX, rations + rationDelta));
 
+  // The betrayal ending: already fully fed (rations were maxed), you sell out
+  // yet another rebellion letter while the cause has barely stirred (<= 4).
+  pendingForcedEnding = soldOut && rationsAtStart >= RATIONS_MAX && resistance <= 4;
+
   showStamp(stampText, stampColor);
   fb.className = fbClass;
   fb.textContent = fbText;
@@ -624,7 +683,12 @@ function fileDocument(): void {
 }
 
 function afterVerdict(): void {
-  // Win / lose checks first.
+  // A special betrayal ending takes precedence over the ordinary win/lose.
+  if (pendingForcedEnding) { forcedForever(); return; }
+  // The martyr: the final act of defiance completes the uprising and empties
+  // your ration book in the same stroke. Checked before the plain win/lose.
+  if (resistance >= RESISTANCE_WIN && rations <= 0) { martyr(); return; }
+  // Win / lose checks.
   if (resistance >= RESISTANCE_WIN) { victory(); return; }
   if (rations <= 0) { gameOver(); return; }
 
@@ -677,6 +741,7 @@ function showStamp(text: string, color: string): void {
 
 /* ---------- ENDINGS ---------- */
 function gameOver(): void {
+  stopClock();
   statusEl.textContent = "";
   viewEl.innerHTML =
     '<div class="screen">' +
@@ -691,6 +756,7 @@ function gameOver(): void {
 }
 
 function victory(): void {
+  stopClock();
   statusEl.textContent = "";
   viewEl.innerHTML =
     '<div class="screen">' +
@@ -700,6 +766,38 @@ function victory(): void {
         "The Eastern Sector has always been loyal — to itself.</p>" +
       '<p class="muted">' + released + " truths released · " + buried +
         " buried along the way. History will disagree about which mattered.</p>" +
+      '<button id="btn-restart">Begin Again</button>' +
+    "</div>";
+  byId("btn-restart").addEventListener("click", startGame);
+}
+
+/** The betrayal ending: fully fed, you sold out the rebellion one time too many
+ *  while the cause never rose. There is no release from a perfect instrument. */
+function forcedForever(): void {
+  stopClock();
+  statusEl.textContent = "";
+  viewEl.innerHTML =
+    '<div class="screen">' +
+      '<h2 class="red">Model Employee</h2>' +
+      "<p>Your ration book was already full. You had no hunger left to blame — and you buried them anyway.</p>" +
+      "<p>The Ministry has found the rarest instrument: a clerk who no longer needs a reason. There will be no last day, no pension, no door. Only the next letter, and the next, and the marker that never runs dry.</p>" +
+      '<p class="muted">' + buried + " truths buried · the tunnels have stopped whispering your other name.</p>" +
+      '<button id="btn-restart">Continue</button>' +
+    "</div>";
+  byId("btn-restart").addEventListener("click", startGame);
+}
+
+/** The martyr: your final act of defiance completed the uprising and cost your
+ *  last ration in the same stroke. The cause wins; you do not live to see it. */
+function martyr(): void {
+  stopClock();
+  statusEl.textContent = "";
+  viewEl.innerHTML =
+    '<div class="screen">' +
+      '<h2 class="amber">Martyr</h2>' +
+      "<p>Your last ration bought one final truth its freedom. The presses run tonight — and you will not hear them.</p>" +
+      "<p>On the " + ordinal(day) + " day the tunnels speak your other name aloud, for the first time and the last, because there is no one left at the desk to deny it.</p>" +
+      '<p class="muted">' + released + " truths released · you gave everything, down to the bread.</p>" +
       '<button id="btn-restart">Begin Again</button>' +
     "</div>";
   byId("btn-restart").addEventListener("click", startGame);
