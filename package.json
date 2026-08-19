@@ -4,7 +4,12 @@
   "description": "A dystopian document-redaction game.",
   "private": true,
   "scripts": {
-    "dev": "node server.js",
+    "build": "tsc",
+    "dev": "tsc && node server.js",
+    "watch": "tsc --watch",
     "start": "node server.js"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2"
   }
 }
